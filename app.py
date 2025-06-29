@@ -1,6 +1,9 @@
 import streamlit as st
 import os
-# from dotenv import load_dotenv
+import io
+import sys
+from contextlib import redirect_stdout, redirect_stderr
+
 # Load environment variables (only for local development)
 try:
     from dotenv import load_dotenv
@@ -8,13 +11,16 @@ try:
 except ImportError:
     # dotenv not available in Streamlit Cloud, use Streamlit secrets instead
     pass
-import io
-import sys
-from contextlib import redirect_stdout, redirect_stderr
-import matplotlib.pyplot as plt
 
-# Load environment variables
-load_dotenv()
+# Configure matplotlib for Streamlit Cloud
+try:
+    import matplotlib
+    matplotlib.use('Agg')  # Set backend before importing pyplot
+    import matplotlib.pyplot as plt
+    import matplotlib.image as mpimg
+except ImportError as e:
+    st.error(f"Matplotlib not available: {e}")
+    st.stop()
 
 # Import required packages
 from langchain_openai import ChatOpenAI
@@ -150,9 +156,6 @@ else:
                 st.session_state.chart_generated = True
                 # Display the chart immediately in Streamlit
                 try:
-                    import matplotlib.pyplot as plt
-                    import matplotlib.image as mpimg
-                    
                     # Read and display the saved image
                     img = mpimg.imread('generated_chart.png')
                     fig, ax = plt.subplots(figsize=(12, 8))
