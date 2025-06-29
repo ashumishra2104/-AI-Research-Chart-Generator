@@ -1,9 +1,10 @@
 import streamlit as st
 import os
-# from dotenv import load_dotenv
+from dotenv import load_dotenv
 import io
 import sys
 from contextlib import redirect_stdout, redirect_stderr
+import matplotlib.pyplot as plt
 
 # Load environment variables
 load_dotenv()
@@ -20,6 +21,8 @@ from typing import Annotated
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_experimental.utilities import PythonREPL
+from pydantic import SecretStr
+from langchain_core.runnables import RunnableConfig
 
 # Page configuration
 st.set_page_config(
@@ -82,7 +85,7 @@ def initialize_workflow():
     # Set up LLM
     llm = ChatOpenAI(
         model="gpt-4.1-2025-04-14",
-        api_key=openai_api_key,
+        api_key=SecretStr(openai_api_key) if openai_api_key else None,
         temperature=0.1
     )
     
@@ -103,10 +106,6 @@ def initialize_workflow():
         """Use this to execute python code. If you want to see the output of a value,
         you should print it out with `print(...)`. This is visible to the user."""
         
-        # Capture output
-        stdout_capture = io.StringIO()
-        stderr_capture = io.StringIO()
-        
         try:
             # Enhanced code with matplotlib backend for Streamlit
             enhanced_code = f"""
@@ -126,34 +125,41 @@ plt.rcParams['figure.dpi'] = 100
 
 {code}
 
-# Save the plot if created
-import matplotlib.pyplot as plt
+# Check if plot was created and save
 if plt.get_fignums():
     plt.savefig('generated_chart.png', bbox_inches='tight', dpi=150)
-    print("Chart saved successfully!")
+    print("Chart created and saved successfully!")
+    chart_created = True
+else:
+    chart_created = False
+    print("No chart was created.")
 """
             
-            with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-                result = repl.run(enhanced_code)
+            # Execute the enhanced code
+            result = repl.run(enhanced_code)
             
-            stdout_output = stdout_capture.getvalue()
-            stderr_output = stderr_capture.getvalue()
-            
-            # Check if chart was created
-            import matplotlib.pyplot as plt
-            if plt.get_fignums():
+            # Check if chart file was actually created
+            if os.path.exists('generated_chart.png'):
                 st.session_state.chart_generated = True
-                # Display the chart in Streamlit
-                st.pyplot(plt.gcf())
-                plt.close('all')  # Clean up
-            
-            output = f"Execution successful!\n"
-            if stdout_output:
-                output += f"Output: {stdout_output}\n"
-            if stderr_output:
-                output += f"Warnings: {stderr_output}\n"
+                # Display the chart immediately in Streamlit
+                try:
+                    import matplotlib.pyplot as plt
+                    import matplotlib.image as mpimg
+                    
+                    # Read and display the saved image
+                    img = mpimg.imread('generated_chart.png')
+                    fig, ax = plt.subplots(figsize=(12, 8))
+                    ax.imshow(img)
+                    ax.axis('off')
+                    st.pyplot(fig)
+                    plt.close('all')  # Clean up
+                    
+                except Exception as display_error:
+                    st.warning(f"Chart saved but display failed: {display_error}")
+            else:
+                st.session_state.chart_generated = False
                 
-            return output + "\n\nIf you have completed all tasks, respond with FINAL ANSWER."
+            return f"Successfully executed:\n```python\n{code}\n```\nOutput: {result}\n\nIf you have completed all tasks, respond with FINAL ANSWER."
             
         except Exception as e:
             return f"Failed to execute. Error: {repr(e)}"
@@ -177,7 +183,7 @@ if plt.get_fignums():
         return goto
     
     # Agent 1: Research Node
-    def research_node(state: MessagesState) -> Command[Literal["chart_generator", END]]:
+    def research_node(state: MessagesState) -> Command:
         research_agent = create_react_agent(
             llm,
             tools=[search_tool],
@@ -203,7 +209,7 @@ if plt.get_fignums():
         return Command(update={"messages": result["messages"]}, goto=goto)
     
     # Agent 2: Chart Generator Node
-    def chart_node(state: MessagesState) -> Command[Literal["researcher", END]]:
+    def chart_node(state: MessagesState) -> Command:
         chart_agent = create_react_agent(
             llm,
             tools=[python_repl_tool],
@@ -216,9 +222,22 @@ if plt.get_fignums():
                 4. Once the chart is created successfully, respond with FINAL ANSWER
                 
                 Available libraries: matplotlib, pandas, numpy, seaborn
-                Always include plt.show() to display the chart.
+                IMPORTANT: Always include plt.show() at the end of your code to ensure the chart is displayed.
                 
-                Do NOT search for additional data - use what the researcher provided."""
+                Do NOT search for additional data - use what the researcher provided.
+                
+                Example chart code structure:
+                ```python
+                # Your data processing here
+                plt.figure(figsize=(12, 8))
+                # Your plotting code here
+                plt.title('Your Chart Title')
+                plt.xlabel('X Label')
+                plt.ylabel('Y Label')
+                plt.grid(True, alpha=0.3)
+                plt.tight_layout()
+                plt.show()  # This is essential for display
+                ```"""
             ),
         )
         
@@ -327,7 +346,7 @@ def main():
             
             with st.spinner("🤖 Agents are working together..."):
                 try:
-                    config = {"recursion_limit": recursion_limit}
+                    config: RunnableConfig = {"recursion_limit": recursion_limit}
                     result = app.invoke(
                         {"messages": [("user", user_query)]},
                         config=config
@@ -347,22 +366,25 @@ def main():
         with st.expander("View Full Conversation", expanded=True):
             display_conversation(st.session_state.workflow_result["messages"])
         
-        # Success message
-        if st.session_state.chart_generated:
-            st.success("🎉 Chart generated successfully! Check above for the visualization.")
-        
-        # Download option
-        if st.session_state.chart_generated:
-            try:
-                with open("generated_chart.png", "rb") as file:
-                    st.download_button(
-                        label="📥 Download Chart",
-                        data=file.read(),
-                        file_name="ai_generated_chart.png",
-                        mime="image/png"
-                    )
-            except FileNotFoundError:
-                pass
+        # Check for generated chart file
+        chart_path = "generated_chart.png"
+        if os.path.exists(chart_path):
+            st.success("🎉 Chart generated successfully!")
+            st.image(chart_path, caption="Generated Chart", use_column_width=True)
+            st.session_state.chart_generated = True
+            
+            # Download option
+            with open(chart_path, "rb") as file:
+                st.download_button(
+                    label="📥 Download Chart",
+                    data=file.read(),
+                    file_name="ai_generated_chart.png",
+                    mime="image/png"
+                )
+        elif st.session_state.chart_generated:
+            st.warning("⚠️ Chart was generated but file not found.")
+        else:
+            st.info("ℹ️ No chart generated yet or agents are still working.")
 
 if __name__ == "__main__":
     main()
