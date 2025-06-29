@@ -1,6 +1,13 @@
 import streamlit as st
 import os
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
+# Load environment variables (only for local development)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # dotenv not available in Streamlit Cloud, use Streamlit secrets instead
+    pass
 import io
 import sys
 from contextlib import redirect_stdout, redirect_stderr
