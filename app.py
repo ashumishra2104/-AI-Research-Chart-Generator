@@ -9,18 +9,7 @@ try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    # dotenv not available in Streamlit Cloud, use Streamlit secrets instead
     pass
-
-# Configure matplotlib for Streamlit Cloud
-try:
-    import matplotlib
-    matplotlib.use('Agg')  # Set backend before importing pyplot
-    import matplotlib.pyplot as plt
-    import matplotlib.image as mpimg
-except ImportError as e:
-    st.error(f"Matplotlib not available: {e}")
-    st.stop()
 
 # Import required packages
 from langchain_openai import ChatOpenAI
@@ -111,65 +100,36 @@ def initialize_workflow():
     # Set up Python REPL
     repl = PythonREPL()
     
-    # Define Python REPL tool
+    # Define Python REPL tool that generates chart code
     @tool
     def python_repl_tool(
         code: Annotated[str, "The python code to execute to generate your chart."],
     ):
-        """Use this to execute python code. If you want to see the output of a value,
-        you should print it out with `print(...)`. This is visible to the user."""
+        """Use this to execute python code. This will generate chart code for you to run."""
         
         try:
-            # Enhanced code with matplotlib backend for Streamlit
+            # Create code that works with basic Python and shows data
             enhanced_code = f"""
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
-import seaborn as sns
-import warnings
-warnings.filterwarnings('ignore')
-
-# Configure for better display
-plt.style.use('default')
-plt.rcParams['figure.figsize'] = (12, 8)
-plt.rcParams['figure.dpi'] = 100
 
 {code}
 
-# Check if plot was created and save
-if plt.get_fignums():
-    plt.savefig('generated_chart.png', bbox_inches='tight', dpi=150)
-    print("Chart created and saved successfully!")
-    chart_created = True
-else:
-    chart_created = False
-    print("No chart was created.")
+print("Chart code generated successfully!")
+print("Note: To view charts, you can copy this code and run it in a local environment with matplotlib.")
 """
             
-            # Execute the enhanced code
+            # Execute the code
             result = repl.run(enhanced_code)
             
-            # Check if chart file was actually created
-            if os.path.exists('generated_chart.png'):
-                st.session_state.chart_generated = True
-                # Display the chart immediately in Streamlit
-                try:
-                    # Read and display the saved image
-                    img = mpimg.imread('generated_chart.png')
-                    fig, ax = plt.subplots(figsize=(12, 8))
-                    ax.imshow(img)
-                    ax.axis('off')
-                    st.pyplot(fig)
-                    plt.close('all')  # Clean up
-                    
-                except Exception as display_error:
-                    st.warning(f"Chart saved but display failed: {display_error}")
-            else:
-                st.session_state.chart_generated = False
+            # Display the chart code for users to copy
+            st.subheader("📊 Generated Chart Code")
+            st.code(code, language='python')
+            st.info("💡 Copy this code and run it locally with matplotlib to see the chart!")
+            
+            st.session_state.chart_generated = True
                 
-            return f"Successfully executed:\n```python\n{code}\n```\nOutput: {result}\n\nIf you have completed all tasks, respond with FINAL ANSWER."
+            return f"Successfully generated chart code:\n```python\n{code}\n```\nOutput: {result}\n\nChart code is displayed for the user to copy and run locally.\n\nFINAL ANSWER"
             
         except Exception as e:
             return f"Failed to execute. Error: {repr(e)}"
@@ -227,27 +187,38 @@ else:
                 """You can only generate charts. You are working with a researcher colleague.
                 Your job is to:
                 1. Take the data provided by the researcher
-                2. Create the requested visualization using matplotlib
-                3. Use proper labels, titles, and formatting
-                4. Once the chart is created successfully, respond with FINAL ANSWER
+                2. Create Python code for visualization using matplotlib
+                3. Generate clean, professional chart code with proper labels and formatting
+                4. Once you create the chart code, respond with FINAL ANSWER
                 
-                Available libraries: matplotlib, pandas, numpy, seaborn
-                IMPORTANT: Always include plt.show() at the end of your code to ensure the chart is displayed.
+                IMPORTANT: You are generating matplotlib code that users can copy and run locally.
+                Always create complete, runnable Python code with:
+                - Data setup from the research
+                - matplotlib imports
+                - Proper chart creation
+                - Labels, titles, and formatting
+                - plt.show() at the end
                 
-                Do NOT search for additional data - use what the researcher provided.
-                
-                Example chart code structure:
+                Example structure:
                 ```python
-                # Your data processing here
+                import matplotlib.pyplot as plt
+                import pandas as pd
+                
+                # Data from research
+                data = {...}
+                
+                # Create chart
                 plt.figure(figsize=(12, 8))
-                # Your plotting code here
-                plt.title('Your Chart Title')
+                # ... plotting code ...
+                plt.title('Chart Title')
                 plt.xlabel('X Label')
                 plt.ylabel('Y Label')
                 plt.grid(True, alpha=0.3)
                 plt.tight_layout()
-                plt.show()  # This is essential for display
-                ```"""
+                plt.show()
+                ```
+                
+                Do NOT search for additional data - use what the researcher provided."""
             ),
         )
         
@@ -306,13 +277,16 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
+    # Info about matplotlib
+    st.info("📝 This version generates chart code for you to copy and run locally with matplotlib!")
+    
     # Sidebar
     with st.sidebar:
         st.header("📋 How it works")
         st.markdown("""
         1. **🔍 Research Agent**: Searches for data online
-        2. **📊 Chart Generator**: Creates visualizations
-        3. **🤝 Collaboration**: Agents work together seamlessly
+        2. **📊 Chart Generator**: Creates Python code for visualizations
+        3. **📝 Copy & Run**: Copy the generated code to run locally
         """)
         
         st.header("💡 Example Queries")
@@ -350,7 +324,7 @@ def main():
         recursion_limit = st.number_input("Max Steps", min_value=5, max_value=25, value=15)
     
     # Generate button
-    if st.button("🚀 Generate Research & Chart", type="primary", use_container_width=True):
+    if st.button("🚀 Generate Research & Chart Code", type="primary", use_container_width=True):
         if user_query:
             st.session_state.chart_generated = False
             
@@ -376,25 +350,8 @@ def main():
         with st.expander("View Full Conversation", expanded=True):
             display_conversation(st.session_state.workflow_result["messages"])
         
-        # Check for generated chart file
-        chart_path = "generated_chart.png"
-        if os.path.exists(chart_path):
-            st.success("🎉 Chart generated successfully!")
-            st.image(chart_path, caption="Generated Chart", use_column_width=True)
-            st.session_state.chart_generated = True
-            
-            # Download option
-            with open(chart_path, "rb") as file:
-                st.download_button(
-                    label="📥 Download Chart",
-                    data=file.read(),
-                    file_name="ai_generated_chart.png",
-                    mime="image/png"
-                )
-        elif st.session_state.chart_generated:
-            st.warning("⚠️ Chart was generated but file not found.")
-        else:
-            st.info("ℹ️ No chart generated yet or agents are still working.")
+        if st.session_state.chart_generated:
+            st.success("🎉 Chart code generated successfully! Copy the code above and run it locally.")
 
 if __name__ == "__main__":
     main()
